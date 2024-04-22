@@ -17,11 +17,11 @@ type GrpcResolverBuilder struct {
 func NewRegistryBuilder(registry registry.Registry, opts ...GrpcResolverOptions) (*GrpcResolverBuilder, error) {
 	res := &GrpcResolverBuilder{
 		registry: registry,
-		timeout:  time.Second * 10,
+		timeout:  time.Second * 3,
 	}
-	for _, opt := range opts {
-		opt(res)
-	}
+	//for _, opt := range opts {
+	//	opt(res)
+	//}
 	return res, nil
 }
 

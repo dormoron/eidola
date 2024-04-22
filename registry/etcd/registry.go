@@ -44,7 +44,7 @@ func (r *Registry) UnRegistry(ctx context.Context, si registry.ServiceInstance) 
 }
 
 func (r *Registry) ListService(ctx context.Context, name string) ([]registry.ServiceInstance, error) {
-	getResp, err := r.client.Get(ctx, r.serviceKey(name))
+	getResp, err := r.client.Get(ctx, r.serviceKey(name), clientv3.WithPrefix())
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +73,7 @@ func (r *Registry) Subscribe(name string) (<-chan registry.Event, error) {
 			select {
 			case resp := <-watchResp:
 				if resp.Err() != nil {
-					return
+					continue
 				}
 				if resp.Canceled {
 					return

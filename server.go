@@ -35,9 +35,7 @@ func (s *Server) Start(addr string) error {
 	if err != nil {
 		return err
 	}
-
 	s.listener = listener
-
 	if s.registry != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), s.registerTimeout)
 		defer cancel()

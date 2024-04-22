@@ -18,7 +18,9 @@ type Client struct {
 }
 
 func NewClient(opts ...ClientOption) (*Client, error) {
-	res := &Client{}
+	res := &Client{
+		timeout: time.Second * 3,
+	}
 	for _, opt := range opts {
 		opt(res)
 	}
@@ -31,15 +33,10 @@ func ClientInsecure() ClientOption {
 	}
 }
 
-func ClientWithTimeout(timeout time.Duration) ClientOption {
-	return func(c *Client) {
-		c.timeout = timeout
-	}
-}
-
-func ClientWithResolver(registry registry.Registry) ClientOption {
+func ClientWithResolver(registry registry.Registry, timeout time.Duration) ClientOption {
 	return func(c *Client) {
 		c.registry = registry
+		c.timeout = timeout
 	}
 }
 
