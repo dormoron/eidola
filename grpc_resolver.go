@@ -19,9 +19,9 @@ func NewRegistryBuilder(registry registry.Registry, opts ...GrpcResolverOptions)
 		registry: registry,
 		timeout:  time.Second * 3,
 	}
-	//for _, opt := range opts {
-	//	opt(res)
-	//}
+	for _, opt := range opts {
+		opt(res)
+	}
 	return res, nil
 }
 
