@@ -16,6 +16,8 @@ type Server struct {
 	registerTimeout time.Duration
 	*grpc.Server
 	listener net.Listener
+	weight   uint32
+	group    string
 }
 
 func NewServer(name string, opts ...ServerOption) (*Server, error) {
@@ -42,6 +44,8 @@ func (s *Server) Start(addr string) error {
 		err = s.registry.Registry(ctx, registry.ServiceInstance{
 			Name:    s.name,
 			Address: listener.Addr().String(),
+			Weight:  s.weight,
+			Group:   s.group,
 		})
 		if err != nil {
 			return err
@@ -71,5 +75,17 @@ func ServerWithRegistry(reg registry.Registry) ServerOption {
 func ServerWithRegisterTimeout(d time.Duration) ServerOption {
 	return func(s *Server) {
 		s.registerTimeout = d
+	}
+}
+
+func ServerWithWeight(weight uint32) ServerOption {
+	return func(s *Server) {
+		s.weight = weight
+	}
+}
+
+func ServerWithGroup(group string) ServerOption {
+	return func(s *Server) {
+		s.group = group
 	}
 }

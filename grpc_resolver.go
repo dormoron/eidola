@@ -3,6 +3,7 @@ package eidola
 import (
 	"context"
 	"eidola/registry"
+	"google.golang.org/grpc/attributes"
 	"google.golang.org/grpc/resolver"
 	"time"
 )
@@ -86,7 +87,8 @@ func (g *grpcResolver) resolve() {
 	address := make([]resolver.Address, 0, len(instances))
 	for _, si := range instances {
 		address = append(address, resolver.Address{
-			Addr: si.Address,
+			Addr:       si.Address,
+			Attributes: attributes.New("weight", si.Weight).WithValue("group", si.Group),
 		})
 	}
 	err = g.clientConn.UpdateState(resolver.State{
