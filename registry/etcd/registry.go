@@ -43,7 +43,7 @@ func (r *Registry) UnRegistry(ctx context.Context, si registry.ServiceInstance) 
 	return err
 }
 
-func (r *Registry) ListService(ctx context.Context, name string) ([]registry.ServiceInstance, error) {
+func (r *Registry) ListServices(ctx context.Context, name string) ([]registry.ServiceInstance, error) {
 	getResp, err := r.client.Get(ctx, r.serviceKey(name), clientv3.WithPrefix())
 	if err != nil {
 		return nil, err

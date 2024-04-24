@@ -79,7 +79,7 @@ func (g *grpcResolver) watch() {
 func (g *grpcResolver) resolve() {
 	ctx, cancel := context.WithTimeout(context.Background(), g.timeout)
 	defer cancel()
-	instances, err := g.registry.ListService(ctx, g.target.Endpoint())
+	instances, err := g.registry.ListServices(ctx, g.target.Endpoint())
 	if err != nil {
 		g.clientConn.ReportError(err)
 		return

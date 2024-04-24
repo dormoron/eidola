@@ -8,7 +8,7 @@ import (
 type Registry interface {
 	Registry(ctx context.Context, si ServiceInstance) error
 	UnRegistry(ctx context.Context, si ServiceInstance) error
-	ListService(ctx context.Context, name string) ([]ServiceInstance, error)
+	ListServices(ctx context.Context, name string) ([]ServiceInstance, error)
 	Subscribe(name string) (<-chan Event, error)
 	io.Closer
 }
