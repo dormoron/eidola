@@ -1,7 +1,7 @@
 package random
 
 import (
-	"eidola/route"
+	"eidola/loadbalance"
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/balancer/base"
 	"google.golang.org/grpc/resolver"
@@ -10,7 +10,7 @@ import (
 
 type WeightBalancer struct {
 	connections []*weightConn
-	filter      route.Filter
+	filter      loadbalance.Filter
 }
 
 func (b *WeightBalancer) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
@@ -43,7 +43,7 @@ func (b *WeightBalancer) Pick(info balancer.PickInfo) (balancer.PickResult, erro
 }
 
 type WeightBalancerBuilder struct {
-	Filter route.Filter
+	Filter loadbalance.Filter
 }
 
 func (b *WeightBalancerBuilder) Build(info base.PickerBuildInfo) balancer.Picker {

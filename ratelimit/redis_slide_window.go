@@ -38,7 +38,7 @@ func RedisSlideWindowMarkFailed() RedisSlideWindowLimiterOptions {
 	}
 }
 
-func (l *RedisSlideWindowLimiter) BuildServerInterceptor() grpc.UnaryServerInterceptor {
+func (l *RedisSlideWindowLimiter) LimitUnary() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp any, err error) {
 		limit, err := l.limit(ctx)
 		if err != nil {

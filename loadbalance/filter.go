@@ -1,4 +1,4 @@
-package route
+package loadbalance
 
 import (
 	"google.golang.org/grpc/balancer"

@@ -1,7 +1,7 @@
 package round_robin
 
 import (
-	"eidola/route"
+	"eidola/loadbalance"
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/balancer/base"
 	"google.golang.org/grpc/resolver"
@@ -13,7 +13,7 @@ import (
 type WeightBalancer struct {
 	connections []*weightConn
 	mutex       sync.Mutex
-	filter      route.Filter
+	filter      loadbalance.Filter
 }
 
 func (w *WeightBalancer) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
@@ -61,7 +61,7 @@ func (w *WeightBalancer) Pick(info balancer.PickInfo) (balancer.PickResult, erro
 }
 
 type WeightBalancerBuilder struct {
-	Filter route.Filter
+	Filter loadbalance.Filter
 }
 
 func (w *WeightBalancerBuilder) Build(info base.PickerBuildInfo) balancer.Picker {

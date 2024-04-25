@@ -45,7 +45,7 @@ func TokenBucketMarkFailed() TokenBucketLimiterOptions {
 	}
 }
 
-func (l *TokenBucketLimiter) BuildServerInterceptor() grpc.UnaryServerInterceptor {
+func (l *TokenBucketLimiter) LimitUnary() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp any, err error) {
 		select {
 		case <-l.close:

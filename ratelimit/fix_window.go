@@ -35,7 +35,7 @@ func FixWindowMarkFailed() FixWindowLimiterOptions {
 	}
 }
 
-func (l *FixWindowLimiter) BuildServerInterceptor() grpc.UnaryServerInterceptor {
+func (l *FixWindowLimiter) LimitUnary() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp any, err error) {
 		current := time.Now().UnixNano()
 		timestamp := atomic.LoadInt64(&l.timestamp)

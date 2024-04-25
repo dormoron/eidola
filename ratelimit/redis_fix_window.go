@@ -38,7 +38,7 @@ func RedisFixWindowMarkFailed() RedisFixWindowLimiterOptions {
 	}
 }
 
-func (l *RedisFixWindowLimiter) BuildServerInterceptor() grpc.UnaryServerInterceptor {
+func (l *RedisFixWindowLimiter) LimitUnary() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp any, err error) {
 		limit, err := l.limit(ctx)
 		if err != nil {

@@ -26,7 +26,7 @@ func LeakyBucketMarkFailed() LeakyBucketLimiterOptions {
 	}
 }
 
-func (l *LeakyBucketLimiter) BuildServerInterceptor() grpc.UnaryServerInterceptor {
+func (l *LeakyBucketLimiter) LimitUnary() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp any, err error) {
 		select {
 		case <-ctx.Done():

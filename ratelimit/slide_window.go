@@ -33,7 +33,7 @@ func SlideWindowMarkFailed() SlideWindowLimiterOptions {
 	}
 }
 
-func (l *SlideWindowLimiter) BuildServerInterceptor() grpc.UnaryServerInterceptor {
+func (l *SlideWindowLimiter) LimitUnary() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp any, err error) {
 		now := time.Now().UnixNano()
 		boundary := now - l.interval
