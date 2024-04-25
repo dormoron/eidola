@@ -1,9 +1,9 @@
 package fastest
 
 import (
-	"eidola/loadbalance"
 	"encoding/json"
 	"fmt"
+	"github.com/dormoron/eidola/loadbalance"
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/balancer/base"
 	"google.golang.org/grpc/resolver"

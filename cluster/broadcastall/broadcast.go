@@ -2,8 +2,8 @@ package broadcast
 
 import (
 	"context"
-	"eidola/registry"
 	"fmt"
+	"github.com/dormoron/eidola/registry"
 	"google.golang.org/grpc"
 	"reflect"
 	"sync"

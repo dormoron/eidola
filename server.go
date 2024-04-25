@@ -2,7 +2,7 @@ package eidola
 
 import (
 	"context"
-	"eidola/registry"
+	"github.com/dormoron/eidola/registry"
 	"google.golang.org/grpc"
 	"net"
 	"time"

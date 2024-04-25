@@ -2,8 +2,8 @@ package opentelemetry
 
 import (
 	"context"
-	"eidola/observability"
 	"fmt"
+	"github.com/dormoron/eidola/observability"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"

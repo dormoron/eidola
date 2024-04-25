@@ -1,7 +1,7 @@
 package random
 
 import (
-	"eidola/loadbalance"
+	"github.com/dormoron/eidola/loadbalance"
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/balancer/base"
 	"google.golang.org/grpc/resolver"

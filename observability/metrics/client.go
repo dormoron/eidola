@@ -2,7 +2,7 @@ package metrics
 
 import (
 	"context"
-	"eidola/observability"
+	"github.com/dormoron/eidola/observability"
 	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
 	"time"

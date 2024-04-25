@@ -2,7 +2,7 @@ package broadcast
 
 import (
 	"context"
-	"eidola/registry"
+	"github.com/dormoron/eidola/registry"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 )

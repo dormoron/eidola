@@ -2,8 +2,8 @@ package eidola
 
 import (
 	"context"
-	"eidola/registry"
 	"fmt"
+	"github.com/dormoron/eidola/registry"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/balancer/base"

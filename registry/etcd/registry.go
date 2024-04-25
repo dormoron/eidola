@@ -2,9 +2,9 @@ package etcd
 
 import (
 	"context"
-	"eidola/registry"
 	"encoding/json"
 	"fmt"
+	"github.com/dormoron/eidola/registry"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"sync"
