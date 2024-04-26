@@ -29,7 +29,7 @@ func NewRegistry(c *clientv3.Client, opts ...concurrency.SessionOption) (*Regist
 
 }
 
-func (r *Registry) Registry(ctx context.Context, si registry.ServiceInstance) error {
+func (r *Registry) Register(ctx context.Context, si registry.ServiceInstance) error {
 	val, err := json.Marshal(si)
 	if err != nil {
 		return err
@@ -38,7 +38,7 @@ func (r *Registry) Registry(ctx context.Context, si registry.ServiceInstance) er
 	return err
 }
 
-func (r *Registry) UnRegistry(ctx context.Context, si registry.ServiceInstance) error {
+func (r *Registry) UnRegister(ctx context.Context, si registry.ServiceInstance) error {
 	_, err := r.client.Delete(ctx, r.instanceKey(si))
 	return err
 }
@@ -48,16 +48,13 @@ func (r *Registry) ListServices(ctx context.Context, name string) ([]registry.Se
 	if err != nil {
 		return nil, err
 	}
-	res := make([]registry.ServiceInstance, 0, len(getResp.Kvs))
-	for _, kv := range getResp.Kvs {
-		var si registry.ServiceInstance
-		err = json.Unmarshal(kv.Value, &si)
-		if err != nil {
+	services := make([]registry.ServiceInstance, len(getResp.Kvs))
+	for i, kv := range getResp.Kvs {
+		if err := json.Unmarshal(kv.Value, &services[i]); err != nil {
 			return nil, err
 		}
-		res = append(res, si)
 	}
-	return res, nil
+	return services, nil
 }
 
 func (r *Registry) Subscribe(name string) (<-chan registry.Event, error) {
@@ -65,38 +62,35 @@ func (r *Registry) Subscribe(name string) (<-chan registry.Event, error) {
 	r.mutex.Lock()
 	r.cancels = append(r.cancels, cancel)
 	r.mutex.Unlock()
-	ctx = clientv3.WithRequireLeader(ctx)
-	watchResp := r.client.Watch(ctx, r.serviceKey(name), clientv3.WithPrefix())
-	res := make(chan registry.Event)
+
+	ch := make(chan registry.Event)
 	go func() {
-		for {
-			select {
-			case resp := <-watchResp:
-				if resp.Err() != nil {
-					continue
-				}
-				if resp.Canceled {
-					return
-				}
-				for range resp.Events {
-					res <- registry.Event{}
-				}
-			case <-ctx.Done():
+		defer close(ch)
+		watchChan := r.client.Watch(ctx, r.serviceKey(name), clientv3.WithPrefix())
+		for resp := range watchChan {
+			if resp.Err() != nil {
+				continue // Log or handle error.
+			}
+			if resp.Canceled {
 				return
+			}
+			for range resp.Events {
+				// Process the event.
+				ch <- registry.Event{} // Fill Event struct accordingly.
 			}
 		}
 	}()
-	return res, nil
+	return ch, nil
 }
 
 func (r *Registry) Close() error {
 	r.mutex.Lock()
-	cancels := r.cancels
-	r.cancels = nil
-	r.mutex.Unlock()
-	for _, cancel := range cancels {
+	defer r.mutex.Unlock()
+
+	for _, cancel := range r.cancels {
 		cancel()
 	}
+	r.cancels = nil
 	return r.session.Close()
 }
 
