@@ -30,8 +30,8 @@ import (
 )
 
 func main() {
-    // 连接etcd
-    etcdClient, err := clientv3.New(clientv3.Config{
+	// 连接etcd
+	etcdClient, err := clientv3.New(clientv3.Config{
 		Endpoints: []string{"localhost:2379"},
 	})
 	r, err := etcd.NewRegistry(etcdClient)
@@ -51,7 +51,7 @@ func main() {
 package main
 
 import (
-    "context"
+	"context"
 	"github.com/dormoron/eidola"
 	"github.com/dormoron/eidola/registry/etcd"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -59,9 +59,9 @@ import (
 )
 
 func main() {
-    // 连接etcd
-    etcdClient, err := clientv3.New(clientv3.Config{
-		Endpoints: []string{"localhost:2379"},
+	// 连接etcd
+	etcdClient, err := clientv3.New(clientv3.Config{
+		Endpoints: []string{"82.156.204.14:2379"},
 	})
 	r, err := etcd.NewRegistry(etcdClient)
 	// 创建客户端实例
