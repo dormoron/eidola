@@ -1,4 +1,4 @@
-# eidola
+# Eidola
 
 ## 介绍
 
