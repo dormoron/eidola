@@ -8,43 +8,50 @@ import (
 	"sync/atomic"
 )
 
+// Balancer manages load balancing over a set of connections with filtering capabilities.
 type Balancer struct {
-	index       atomic.Int32
-	connections []subConn
-	filter      loadbalance.Filter
+	index       atomic.Int32       // Maintains round-robin index safely across goroutines
+	connections []subConn          // Slice of sub connections available for balancing
+	filter      loadbalance.Filter // Optional filter to apply during picking connections
 }
 
+// Pick selects the next subConn based on the filter criteria and using round-robin.
 func (b *Balancer) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
+	// creating a slice to store potential connections for selection
 	candidates := make([]subConn, 0, len(b.connections))
-	for _, c := range b.connections {
-		if b.filter != nil && !b.filter(info, c.addr) {
-			continue
+	for _, conn := range b.connections {
+		if b.filter == nil || b.filter(info, conn.addr) {
+			candidates = append(candidates, conn)
 		}
-		candidates = append(candidates, c)
 	}
 	if len(candidates) == 0 {
 		return balancer.PickResult{}, balancer.ErrNoSubConnAvailable
 	}
-	b.index.Store(b.index.Load() + 1)
-	c := candidates[b.index.Load()%int32(len(candidates))]
+
+	// Round-robin selection of sub connections
+	index := b.index.Add(1)
+	selected := candidates[index%int32(len(candidates))]
 	return balancer.PickResult{
-		SubConn: c.c,
-		Done:    func(info balancer.DoneInfo) {},
+		SubConn: selected.conn,
+		Done:    func(balancer.DoneInfo) {},
 	}, nil
 }
 
+// Builder constructs a Balancer with a provided filter.
 type Builder struct {
-	Filter loadbalance.Filter
+	Filter loadbalance.Filter // Filter is to apply during the balancing process
 }
 
-func (b Builder) Build(info base.PickerBuildInfo) balancer.Picker {
+// Build constructs an instance of Balancer from the provided PickerBuildInfo.
+func (b *Builder) Build(info base.PickerBuildInfo) balancer.Picker {
 	connections := make([]subConn, 0, len(info.ReadySCs))
-	for c, ci := range info.ReadySCs {
+	for conn, connInfo := range info.ReadySCs {
 		connections = append(connections, subConn{
-			c:    c,
-			addr: ci.Address,
+			conn: conn,
+			addr: connInfo.Address,
 		})
 	}
+
 	res := &Balancer{
 		connections: connections,
 		filter:      b.Filter,
@@ -53,7 +60,8 @@ func (b Builder) Build(info base.PickerBuildInfo) balancer.Picker {
 	return res
 }
 
+// subConn stores the data related to each sub connection.
 type subConn struct {
-	c    balancer.SubConn
-	addr resolver.Address
+	conn balancer.SubConn // The gRPC sub-connection object
+	addr resolver.Address // The address information of the sub-connection
 }

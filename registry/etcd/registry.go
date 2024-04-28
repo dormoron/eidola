@@ -10,13 +10,15 @@ import (
 	"sync"
 )
 
+// Registry is a struct that handles service registration, discovery, and event subscription.
 type Registry struct {
-	client  *clientv3.Client
-	session *concurrency.Session
-	cancels []func()
-	mutex   sync.Mutex
+	client  *clientv3.Client     // The etcd client
+	session *concurrency.Session // The session for the etcd client
+	cancels []func()             // The functions to cancel contexts
+	mutex   sync.Mutex           // The mutex for concurrent cancellation of contexts
 }
 
+// NewRegistry creates a new Registry with the provided etcd Client and Session Options.
 func NewRegistry(c *clientv3.Client, opts ...concurrency.SessionOption) (*Registry, error) {
 	sess, err := concurrency.NewSession(c, opts...)
 	if err != nil {
@@ -26,9 +28,9 @@ func NewRegistry(c *clientv3.Client, opts ...concurrency.SessionOption) (*Regist
 		client:  c,
 		session: sess,
 	}, nil
-
 }
 
+// Register registers a new service instance with the service discovery mechanism.
 func (r *Registry) Register(ctx context.Context, si registry.ServiceInstance) error {
 	val, err := json.Marshal(si)
 	if err != nil {
@@ -38,11 +40,13 @@ func (r *Registry) Register(ctx context.Context, si registry.ServiceInstance) er
 	return err
 }
 
+// UnRegister removes an existing service instance from the service discovery mechanism.
 func (r *Registry) UnRegister(ctx context.Context, si registry.ServiceInstance) error {
 	_, err := r.client.Delete(ctx, r.instanceKey(si))
 	return err
 }
 
+// ListServices retrieves a list of service instances by name.
 func (r *Registry) ListServices(ctx context.Context, name string) ([]registry.ServiceInstance, error) {
 	getResp, err := r.client.Get(ctx, r.serviceKey(name), clientv3.WithPrefix())
 	if err != nil {
@@ -57,6 +61,7 @@ func (r *Registry) ListServices(ctx context.Context, name string) ([]registry.Se
 	return services, nil
 }
 
+// Subscribe returns a channel that emits events when the specified service updates.
 func (r *Registry) Subscribe(name string) (<-chan registry.Event, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	r.mutex.Lock()
@@ -83,6 +88,7 @@ func (r *Registry) Subscribe(name string) (<-chan registry.Event, error) {
 	return ch, nil
 }
 
+// Close closes the Registry by cancelling all contexts and closing the session.
 func (r *Registry) Close() error {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
@@ -94,10 +100,12 @@ func (r *Registry) Close() error {
 	return r.session.Close()
 }
 
+// instanceKey constructs the instance key for a particular service instance.
 func (r *Registry) instanceKey(si registry.ServiceInstance) string {
 	return fmt.Sprintf("/%s/%s", si.Name, si.Address)
 }
 
+// serviceKey constructs the service key for a particular service.
 func (r *Registry) serviceKey(name string) string {
 	return fmt.Sprintf("/%s", name)
 }

@@ -4,52 +4,98 @@ import (
 	"context"
 	"fmt"
 	"github.com/dormoron/eidola/observability"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/trace"
+	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/metadata"
+	"log"
+	"time"
 )
 
-const instrumentationName = "github.com/dormoron/eidola/observability/opentelemetry"
+// ServerInterceptorBuilder is a struct used to configure and build UnaryServerInterceptor
+// for gRPC, focusing on metrics like response time, error count, and active request count.
+type ServerInterceptorBuilder struct {
+	Namespace string // Namespace for Prometheus metrics
+	Subsystem string // Subsystem is the subset of the namespace
+	Name      string // Name of the metric
+	Help      string // Help provides some description about the metric
 
-type ServerOtelBuilder struct {
-	Tracer trace.Tracer
-	Port   int
+	Port string // Port where the server is running. If not empty, it will be appended to the address label.
 }
 
-func (b *ServerOtelBuilder) Build() grpc.UnaryServerInterceptor {
-	if b.Tracer == nil {
-		b.Tracer = otel.GetTracerProvider().Tracer(instrumentationName)
+// BuildUnary constructs a UnaryServerInterceptor with Prometheus monitoring.
+func (b ServerInterceptorBuilder) BuildUnary() grpc.UnaryServerInterceptor {
+	address := observability.GetOutboundIP()
+	if b.Port != "" {
+		address = fmt.Sprintf("%s:%s", address, b.Port) // Use fmt.Sprintf for string concatenation
 	}
-	addr := observability.GetOutboundIP()
-	if b.Port != 0 {
-		addr = fmt.Sprintf("%s:%d", addr, b.Port)
+
+	// Define Prometheus SummaryVec for response latency
+	summaryVec := prometheus.NewSummaryVec(prometheus.SummaryOpts{
+		Namespace: b.Namespace,
+		Subsystem: b.Subsystem,
+		Name:      fmt.Sprintf("%s_response", b.Name),
+		Help:      b.Help,
+		// Labels added to all metrics
+		ConstLabels: map[string]string{
+			"address": address,
+			"kind":    "server",
+		},
+		// Customize objectives
+		Objectives: map[float64]float64{
+			0.5:   0.01,
+			0.75:  0.01,
+			0.9:   0.01,
+			0.99:  0.001,
+			0.999: 0.0001,
+		},
+	}, []string{"method"})
+
+	// Define Prometheus CounterVec for error count
+	errCntVec := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: b.Namespace,
+		Subsystem: b.Subsystem,
+		Name:      fmt.Sprintf("%s_error_cnt", b.Name),
+		Help:      b.Help,
+		ConstLabels: map[string]string{
+			"address": address,
+			"kind":    "server",
+		},
+	}, []string{"method"})
+
+	// Define Prometheus GaugeVec for active request count
+	reqCntVec := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: b.Namespace,
+		Subsystem: b.Subsystem,
+		Name:      fmt.Sprintf("%s_active_req_cnt", b.Name),
+		Help:      b.Help,
+		ConstLabels: map[string]string{
+			"address": address,
+			"kind":    "server",
+		},
+	}, []string{"method"})
+
+	// Register defined metrics with Prometheus
+	if err := prometheus.Register(summaryVec); err != nil {
+		log.Printf("Error registering summaryVec: %v", err)
 	}
-	return func(ctx context.Context, req interface{},
-		info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp interface{}, err error) {
-		ctx = b.extract(ctx)
-		spanCtx, span := b.Tracer.Start(ctx, info.FullMethod, trace.WithSpanKind(trace.SpanKindServer))
-		span.SetAttributes(attribute.String("address", addr))
+	if err := prometheus.Register(errCntVec); err != nil {
+		log.Printf("Error registering errCntVec: %v", err)
+	}
+	if err := prometheus.Register(reqCntVec); err != nil {
+		log.Printf("Error registering reqCntVec: %v", err)
+	}
+
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp interface{}, err error) {
+		reqCnt := reqCntVec.WithLabelValues(info.FullMethod)
+		reqCnt.Inc()
+		startTime := time.Now()
 		defer func() {
 			if err != nil {
-				span.SetStatus(codes.Error, err.Error())
-				span.RecordError(err)
+				errCntVec.WithLabelValues(info.FullMethod).Inc()
 			}
-			span.End()
+			duration := time.Since(startTime)
+			reqCnt.Dec()
+			summaryVec.WithLabelValues(info.FullMethod).Observe(float64(duration.Milliseconds()))
 		}()
-		resp, err = handler(spanCtx, req)
-		return
+		return handler(ctx, req)
 	}
-
-}
-
-func (b *ServerOtelBuilder) extract(ctx context.Context) context.Context {
-	md, ok := metadata.FromIncomingContext(ctx)
-	if !ok {
-		md = metadata.MD{}
-	}
-	return otel.GetTextMapPropagator().Extract(ctx, propagation.HeaderCarrier(md))
 }

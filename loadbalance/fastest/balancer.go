@@ -9,118 +9,51 @@ import (
 	"google.golang.org/grpc/resolver"
 	"log"
 	"net/http"
-	"runtime"
 	"strconv"
 	"sync"
 	"time"
 )
 
+// Conn represents a connection with its address and response time.
+type Conn struct {
+	SubConn  balancer.SubConn
+	Address  resolver.Address
+	Response time.Duration // Response time of the connection.
+}
+
+// Balancer is a custom load balancer that selects connections based on their response time.
 type Balancer struct {
 	mutex    sync.RWMutex
-	conns    []*conn
-	filter   loadbalance.Filter
-	lastSync time.Time
-	endpoint string
+	conns    []*Conn
+	Filter   loadbalance.Filter
+	LastSync time.Time
+	Endpoint string
 }
 
+// Pick selects the connection with the least response time.
 func (b *Balancer) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
 	b.mutex.RLock()
+	defer b.mutex.RUnlock()
+
 	if len(b.conns) == 0 {
-		b.mutex.RUnlock()
 		return balancer.PickResult{}, balancer.ErrNoSubConnAvailable
 	}
-	var res *conn
+	var res *Conn
 	for _, c := range b.conns {
-		if !b.filter(info, c.address) {
+		if b.Filter != nil && !b.Filter(info, c.Address) {
 			continue
 		}
-		if res == nil {
-			res = c
-		} else if res.response > c.response {
+		if res == nil || res.Response > c.Response {
 			res = c
 		}
 	}
-	b.mutex.RUnlock()
-
+	if res == nil {
+		return balancer.PickResult{}, balancer.ErrNoSubConnAvailable
+	}
 	return balancer.PickResult{
 		SubConn: res.SubConn,
-		Done: func(info balancer.DoneInfo) {
-		},
+		Done:    func(info balancer.DoneInfo) {},
 	}, nil
-}
-
-func (b *Builder) Build(info base.PickerBuildInfo) balancer.Picker {
-	conns := make([]*conn, 0, len(info.ReadySCs))
-	for con, val := range info.ReadySCs {
-		conns = append(conns, &conn{
-			SubConn:  con,
-			address:  val.Address,
-			response: time.Millisecond * 100,
-		})
-	}
-	flt := b.Filter
-	if flt == nil {
-		flt = func(info balancer.PickInfo, address resolver.Address) bool {
-			return true
-		}
-	}
-	res := &Balancer{
-		conns:  conns,
-		filter: flt,
-	}
-
-	ch := make(chan struct{}, 1)
-	runtime.SetFinalizer(res, func() {
-		ch <- struct{}{}
-	})
-	go func() {
-		ticker := time.NewTicker(b.Interval)
-		for {
-			select {
-			case <-ticker.C:
-				res.updateRespTime(b.Endpoint, b.Query)
-			case <-ch:
-				return
-			}
-		}
-	}()
-	return res
-}
-
-func (b *Balancer) updateRespTime(endpoint, query string) {
-	httpResp, err := http.Get(fmt.Sprintf("%s/api/v1/query?query=%s", endpoint, query))
-	if err != nil {
-		log.Fatalln("Failed to query prometheus", err)
-		return
-	}
-	decoder := json.NewDecoder(httpResp.Body)
-
-	var resp response
-	err = decoder.Decode(&resp)
-	if err != nil {
-		log.Fatalln("Failed to deserialize http response", err)
-		return
-	}
-	if resp.Status != "success" {
-		log.Fatalln("Failed response", err)
-		return
-	}
-	for _, promRes := range resp.Data.Result {
-		address, ok := promRes.Metric["address"]
-		if !ok {
-			return
-		}
-
-		for _, c := range b.conns {
-			if c.address.Addr == address {
-				ms, err := strconv.ParseInt(promRes.Value[1].(string), 10, 64)
-				if err != nil {
-					continue
-				}
-				c.response = time.Duration(ms) * time.Millisecond
-			}
-		}
-	}
 }
 
 type Builder struct {
@@ -130,11 +63,79 @@ type Builder struct {
 	Interval time.Duration
 }
 
-type conn struct {
-	balancer.SubConn
-	address resolver.Address
-	// 响应时间
-	response time.Duration
+// Build creates a new Balancer and starts a background goroutine to update connections' response times.
+func (b *Builder) Build(info base.PickerBuildInfo) balancer.Picker {
+	conns := make([]*Conn, 0, len(info.ReadySCs))
+	for con, val := range info.ReadySCs {
+		conns = append(conns, &Conn{
+			SubConn:  con,
+			Address:  val.Address,
+			Response: time.Millisecond * 100, // Default response time.
+		})
+	}
+	balancer := &Balancer{
+		conns:  conns,
+		Filter: b.Filter,
+	}
+
+	go balancer.startUpdateRoutine(b.Endpoint, b.Query, b.Interval)
+
+	return balancer
+}
+
+// startUpdateRoutine periodically updates the response times of connections.
+func (b *Balancer) startUpdateRoutine(endpoint, query string, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			b.updateRespTime(endpoint, query)
+		}
+	}
+}
+
+// updateRespTime updates response times based on metrics obtained from an external source.
+func (b *Balancer) updateRespTime(endpoint, query string) {
+	httpResp, err := http.Get(fmt.Sprintf("%s/api/v1/query?query=%s", endpoint, query))
+	if err != nil {
+		log.Println("Failed to query Prometheus:", err)
+		return
+	}
+	defer httpResp.Body.Close()
+
+	var resp response
+	if err := json.NewDecoder(httpResp.Body).Decode(&resp); err != nil {
+		log.Println("Failed to deserialize http response:", err)
+		return
+	}
+
+	if resp.Status != "success" {
+		log.Println("Failed response")
+		return
+	}
+
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	for _, promRes := range resp.Data.Result {
+		address, ok := promRes.Metric["address"]
+		if !ok {
+			continue
+		}
+
+		for _, c := range b.conns {
+			if c.Address.Addr == address {
+				ms, err := strconv.ParseInt(promRes.Value[1].(string), 10, 64)
+				if err != nil {
+					log.Println("Failed to parse response time:", err)
+					continue
+				}
+				c.Response = time.Duration(ms) * time.Millisecond
+			}
+		}
+	}
 }
 
 type response struct {
@@ -144,10 +145,10 @@ type response struct {
 
 type data struct {
 	ResultType string   `json:"resultType"`
-	Result     []Result `json:"result"`
+	Result     []result `json:"result"`
 }
 
-type Result struct {
+type result struct {
 	Metric map[string]string `json:"metric"`
 	Value  []interface{}     `json:"value"`
 }
