@@ -16,6 +16,8 @@ var (
 	errClientDial           = errors.New("failed to dial")
 	// cluster error
 	errClusterNoResponse = errors.New("no one received the response")
+	// ratelimit
+	errRateLimitClose = errors.New("limiter is closed")
 )
 
 func ErrServerListening(err error) error {
@@ -44,4 +46,8 @@ func ErrClientDial(target string, err error) error {
 
 func ErrClusterNoResponse(err error) error {
 	return fmt.Errorf("%w, %w", errClusterNoResponse, err)
+}
+
+func ErrRateLimitClose() error {
+	return errRateLimitClose
 }
