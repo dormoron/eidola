@@ -8,18 +8,18 @@ import (
 	"time"
 )
 
-// GrpcResolverOptions defines a functional option for configuring a GrpcResolverBuilder.
-type GrpcResolverOptions func(r *GrpcResolverBuilder)
+// ResolverOptions defines a functional option for configuring a ResolverBuilder.
+type ResolverOptions func(r *ResolverBuilder)
 
-// GrpcResolverBuilder constructs a grpcResolver with registry and timeout settings.
-type GrpcResolverBuilder struct {
+// ResolverBuilder constructs a grpcResolver with registry and timeout settings.
+type ResolverBuilder struct {
 	registry registry.Registry
 	timeout  time.Duration
 }
 
-// NewRegistryBuilder creates a new GrpcResolverBuilder and applies any additional options.
-func NewRegistryBuilder(registry registry.Registry, opts ...GrpcResolverOptions) (*GrpcResolverBuilder, error) {
-	builder := &GrpcResolverBuilder{
+// NewResolverBuilder creates a new ResolverBuilder and applies any additional options.
+func NewResolverBuilder(registry registry.Registry, opts ...ResolverOptions) (*ResolverBuilder, error) {
+	builder := &ResolverBuilder{
 		registry: registry,
 		timeout:  3 * time.Second, // Default timeout set to 3 seconds.
 	}
@@ -32,15 +32,15 @@ func NewRegistryBuilder(registry registry.Registry, opts ...GrpcResolverOptions)
 	return builder, nil
 }
 
-// RegistryWithTimeout creates a GrpcResolverOptions which sets a custom timeout for a GrpcResolverBuilder.
-func RegistryWithTimeout(timeout time.Duration) GrpcResolverOptions {
-	return func(builder *GrpcResolverBuilder) {
+// ResolverWithTimeout creates a ResolverOptions which sets a custom timeout for a ResolverBuilder.
+func ResolverWithTimeout(timeout time.Duration) ResolverOptions {
+	return func(builder *ResolverBuilder) {
 		builder.timeout = timeout
 	}
 }
 
 // Build constructs a grpcResolver for a given target and client connection with additional resolver build options.
-func (b *GrpcResolverBuilder) Build(target resolver.Target, clientConn resolver.ClientConn, opts resolver.BuildOptions) (resolver.Resolver, error) {
+func (b *ResolverBuilder) Build(target resolver.Target, clientConn resolver.ClientConn, opts resolver.BuildOptions) (resolver.Resolver, error) {
 	r := &grpcResolver{
 		target:     target,
 		registry:   b.registry,
@@ -57,7 +57,7 @@ func (b *GrpcResolverBuilder) Build(target resolver.Target, clientConn resolver.
 }
 
 // Scheme returns the scheme this builder is responsible for.
-func (b *GrpcResolverBuilder) Scheme() string {
+func (b *ResolverBuilder) Scheme() string {
 	return "registry"
 }
 

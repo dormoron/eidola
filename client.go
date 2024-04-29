@@ -64,7 +64,7 @@ func (c *Client) Dial(ctx context.Context, target string, dialOptions ...grpc.Di
 
 	// Configure service resolution if a registry is provided.
 	if c.registry != nil {
-		registryBuilder, err := NewRegistryBuilder(c.registry, RegistryWithTimeout(c.timeout))
+		registryBuilder, err := NewResolverBuilder(c.registry, ResolverWithTimeout(c.timeout))
 		if err != nil {
 			return nil, errs.ErrClientCreateRegistry(err)
 		}
