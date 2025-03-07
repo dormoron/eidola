@@ -7,10 +7,11 @@ import (
 
 var (
 	// server error
-	errServerListening = errors.New("failed to start listening")
-	errSeverRegister   = errors.New("failed to registry service")
-	errFailedServe     = errors.New("failed to serve")
-	errServerClose     = errors.New("failed to close registry")
+	errServerListening      = errors.New("failed to start listening")
+	errSeverRegister        = errors.New("failed to registry service")
+	errFailedServe          = errors.New("failed to serve")
+	errServerClose          = errors.New("failed to close registry")
+	errServerAlreadyRunning = errors.New("server is already running")
 	// client error
 	errClientCreateRegistry = errors.New("failed to create registry builder")
 	errClientDial           = errors.New("failed to dial")
@@ -36,6 +37,10 @@ func ErrFailedServe(err error) error {
 
 func ErrServerClose(err error) error {
 	return fmt.Errorf("%w: %w", errServerClose, err)
+}
+
+func ErrServerAlreadyRunning() error {
+	return errServerAlreadyRunning
 }
 
 func ErrClientCreateRegistry(err error) error {
