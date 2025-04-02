@@ -2,244 +2,85 @@ package auth
 
 import (
 	"context"
-	"fmt"
-
-	"google.golang.org/grpc"
+	"errors"
+	"time"
 )
 
-// ClientInterceptor 是客户端拦截器函数，用于在请求前添加认证信息
-type ClientInterceptor func(ctx context.Context) context.Context
-
-// NewClientUnaryInterceptor 创建客户端一元拦截器
-func NewClientUnaryInterceptor(interceptor ClientInterceptor) grpc.UnaryClientInterceptor {
-	return func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
-		newCtx := interceptor(ctx)
-		return invoker(newCtx, method, req, reply, cc, opts...)
-	}
-}
-
-// NewClientStreamInterceptor 创建客户端流拦截器
-func NewClientStreamInterceptor(interceptor ClientInterceptor) grpc.StreamClientInterceptor {
-	return func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
-		newCtx := interceptor(ctx)
-		return streamer(newCtx, desc, cc, method, opts...)
-	}
-}
-
-// AuthProvider 认证提供器接口
-type AuthProvider interface {
-	// GetAuthenticator 获取认证器
-	GetAuthenticator() Authenticator
-
-	// GetAuthorizer 获取授权器
-	GetAuthorizer() Authorizer
-
-	// GetTokenManager 获取令牌管理器
-	GetTokenManager() TokenManager
-
-	// GetServerInterceptor 获取服务器拦截器
-	GetServerInterceptor() *AuthInterceptor
-}
-
-// MultiAuthenticator 多认证器，支持多种认证方式
-type MultiAuthenticator struct {
-	authenticators []Authenticator
-}
-
-// NewMultiAuthenticator 创建新的多认证器
-func NewMultiAuthenticator(authenticators ...Authenticator) *MultiAuthenticator {
-	return &MultiAuthenticator{
-		authenticators: authenticators,
-	}
-}
-
-// Authenticate 尝试所有认证器认证
-func (m *MultiAuthenticator) Authenticate(ctx context.Context, creds Credentials) (*User, error) {
-	var lastErr error
-	for _, authenticator := range m.authenticators {
-		user, err := authenticator.Authenticate(ctx, creds)
-		if err == nil {
-			return user, nil
-		}
-		lastErr = err
-	}
-	if lastErr == nil {
-		lastErr = fmt.Errorf("no authenticator available")
-	}
-	return nil, lastErr
-}
-
-// MultiAuthorizer 多授权器，支持多种授权策略
-type MultiAuthorizer struct {
-	authorizers []Authorizer
-	strategy    string // "any" or "all"
-}
-
-// NewMultiAuthorizer 创建新的多授权器
-func NewMultiAuthorizer(strategy string, authorizers ...Authorizer) *MultiAuthorizer {
-	if strategy != "any" && strategy != "all" {
-		strategy = "any" // 默认任一授权器授权即可
-	}
-	return &MultiAuthorizer{
-		authorizers: authorizers,
-		strategy:    strategy,
-	}
-}
-
-// Authorize 使用多个授权器授权
-func (m *MultiAuthorizer) Authorize(ctx context.Context, user *User, resource string, action string) (bool, error) {
-	if len(m.authorizers) == 0 {
-		return false, fmt.Errorf("no authorizer available")
-	}
-
-	if m.strategy == "all" {
-		// 全部授权器必须授权
-		for _, authorizer := range m.authorizers {
-			allowed, err := authorizer.Authorize(ctx, user, resource, action)
-			if err != nil {
-				return false, err
-			}
-			if !allowed {
-				return false, nil
-			}
-		}
-		return true, nil
-	}
-
-	// 任一授权器授权即可
-	var lastErr error
-	for _, authorizer := range m.authorizers {
-		allowed, err := authorizer.Authorize(ctx, user, resource, action)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		if allowed {
-			return true, nil
-		}
-	}
-
-	if lastErr != nil {
-		return false, lastErr
-	}
-	return false, nil
-}
-
-// AuthProviderFactory 认证提供器工厂
-type AuthProviderFactory struct {
-	authenticator Authenticator
-	authorizer    Authorizer
-	tokenManager  TokenManager
-	extractors    []TokenExtractor
-}
-
-// NewAuthProviderFactory 创建新的认证提供器工厂
-func NewAuthProviderFactory() *AuthProviderFactory {
-	return &AuthProviderFactory{
-		extractors: make([]TokenExtractor, 0),
-	}
-}
-
-// WithAuthenticator 设置认证器
-func (f *AuthProviderFactory) WithAuthenticator(authenticator Authenticator) *AuthProviderFactory {
-	f.authenticator = authenticator
-	return f
-}
-
-// WithAuthorizer 设置授权器
-func (f *AuthProviderFactory) WithAuthorizer(authorizer Authorizer) *AuthProviderFactory {
-	f.authorizer = authorizer
-	return f
-}
-
-// WithTokenManager 设置令牌管理器
-func (f *AuthProviderFactory) WithTokenManager(tokenManager TokenManager) *AuthProviderFactory {
-	f.tokenManager = tokenManager
-	return f
-}
-
-// AddExtractor 添加令牌提取器
-func (f *AuthProviderFactory) AddExtractor(extractor TokenExtractor) *AuthProviderFactory {
-	f.extractors = append(f.extractors, extractor)
-	return f
-}
-
-// Build 构建认证提供器
-func (f *AuthProviderFactory) Build() *DefaultAuthProvider {
-	interceptor := NewAuthInterceptor(f.authenticator, f.authorizer)
-	for _, extractor := range f.extractors {
-		interceptor.AddExtractor(extractor)
-	}
-
-	return &DefaultAuthProvider{
-		authenticator: f.authenticator,
-		authorizer:    f.authorizer,
-		tokenManager:  f.tokenManager,
-		interceptor:   interceptor,
-	}
-}
-
-// DefaultAuthProvider 默认认证提供器
-type DefaultAuthProvider struct {
-	authenticator Authenticator
-	authorizer    Authorizer
-	tokenManager  TokenManager
-	interceptor   *AuthInterceptor
-}
-
-// GetAuthenticator 获取认证器
-func (p *DefaultAuthProvider) GetAuthenticator() Authenticator {
-	return p.authenticator
-}
-
-// GetAuthorizer 获取授权器
-func (p *DefaultAuthProvider) GetAuthorizer() Authorizer {
-	return p.authorizer
-}
-
-// GetTokenManager 获取令牌管理器
-func (p *DefaultAuthProvider) GetTokenManager() TokenManager {
-	return p.tokenManager
-}
-
-// GetServerInterceptor 获取服务器拦截器
-func (p *DefaultAuthProvider) GetServerInterceptor() *AuthInterceptor {
-	return p.interceptor
-}
-
-// AuthMethod 表示认证方法
-type AuthMethod string
-
-const (
-	// AuthMethodJWT JWT认证
-	AuthMethodJWT AuthMethod = "jwt"
-
-	// AuthMethodBasic 基本认证
-	AuthMethodBasic AuthMethod = "basic"
-
-	// AuthMethodAPIKey API密钥认证
-	AuthMethodAPIKey AuthMethod = "apikey"
-
-	// AuthMethodOAuth2 OAuth2认证
-	AuthMethodOAuth2 AuthMethod = "oauth2"
-
-	// AuthMethodCustom 自定义认证
-	AuthMethodCustom AuthMethod = "custom"
+// 定义常见错误
+var (
+	ErrInvalidCredentials     = errors.New("无效的凭证")
+	ErrInvalidToken           = errors.New("无效的令牌")
+	ErrTokenExpired           = errors.New("令牌已过期")
+	ErrPermissionDenied       = errors.New("权限被拒绝")
+	ErrUserNotFound           = errors.New("用户未找到")
+	ErrAuthServiceUnavailable = errors.New("认证服务不可用")
+	ErrTokenRevoked           = errors.New("令牌已被撤销")
 )
 
-// AuthorizationPolicy 表示授权策略
-type AuthorizationPolicy string
+// Credential 表示用户凭证
+type Credential struct {
+	// 用户名或用户标识符
+	Username string
+	// 密码或令牌
+	Password string
+	// 其他认证信息
+	Extra map[string]string
+}
 
-const (
-	// AuthorizationPolicyRBAC 基于角色的访问控制
-	AuthorizationPolicyRBAC AuthorizationPolicy = "rbac"
+// User 表示认证后的用户信息
+type User struct {
+	// 用户标识符
+	ID string
+	// 用户名
+	Username string
+	// 角色列表
+	Roles []string
+	// 权限列表
+	Permissions []string
+	// 用户扩展信息
+	Metadata map[string]string
+}
 
-	// AuthorizationPolicyABAC 基于属性的访问控制
-	AuthorizationPolicyABAC AuthorizationPolicy = "abac"
+// TokenInfo 表示令牌信息
+type TokenInfo struct {
+	// 访问令牌 (用于验证用户身份)
+	AccessToken string
+	// 刷新令牌 (用于获取新的访问令牌)
+	RefreshToken string
+	// 访问令牌有效期
+	ExpiresAt time.Time
+	// 令牌类型
+	TokenType string
+	// 令牌作用域
+	Scope string
+}
 
-	// AuthorizationPolicyCasbin Casbin授权
-	AuthorizationPolicyCasbin AuthorizationPolicy = "casbin"
+// Authenticator 定义认证接口
+type Authenticator interface {
+	// Authenticate 验证用户凭证并返回用户信息
+	Authenticate(ctx context.Context, credential Credential) (*User, error)
+}
 
-	// AuthorizationPolicyCustom 自定义授权
-	AuthorizationPolicyCustom AuthorizationPolicy = "custom"
-)
+// TokenManager 定义令牌管理接口
+type TokenManager interface {
+	// GenerateToken 生成令牌
+	GenerateToken(ctx context.Context, user *User, duration time.Duration) (*TokenInfo, error)
+	// ValidateToken 验证令牌
+	ValidateToken(ctx context.Context, token string) (*User, error)
+	// RefreshToken 刷新令牌
+	RefreshToken(ctx context.Context, refreshToken string) (*TokenInfo, error)
+	// RevokeToken 撤销令牌
+	RevokeToken(ctx context.Context, token string) error
+}
+
+// TokenExtractor 定义令牌提取接口
+type TokenExtractor interface {
+	// Extract 从上下文中提取令牌
+	Extract(ctx context.Context) (string, error)
+}
+
+// Authorizer 定义授权接口
+type Authorizer interface {
+	// CheckPermission 检查用户是否有特定权限
+	CheckPermission(ctx context.Context, user *User, resource string, action string) (bool, error)
+}

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dormoron/eidola/internal/errs"
+	"github.com/dormoron/eidola/observability/opentelemetry"
 	"github.com/dormoron/eidola/registry"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -41,6 +42,14 @@ type Server struct {
 	initialConnWindowSize int32
 	mu                    sync.RWMutex // 保护共享资源访问
 	running               bool
+
+	// 新增字段
+	compressors        []string                       // 支持的压缩器
+	enableCompression  bool                           // 是否启用压缩
+	otelProvider       *opentelemetry.Provider        // OpenTelemetry Provider
+	enableTracing      bool                           // 是否启用追踪
+	unaryInterceptors  []grpc.UnaryServerInterceptor  // 一元拦截器列表
+	streamInterceptors []grpc.StreamServerInterceptor // 流拦截器列表
 }
 
 // NewServer intializes a new server
@@ -55,6 +64,8 @@ func NewServer(name string, opts ...ServerOption) (*Server, error) {
 		maxConcurrentStreams:  100,
 		initialWindowSize:     1024 * 1024,      // 1MB
 		initialConnWindowSize: 1024 * 1024 * 10, // 10MB
+		unaryInterceptors:     []grpc.UnaryServerInterceptor{},
+		streamInterceptors:    []grpc.StreamServerInterceptor{},
 	}
 
 	for _, opt := range opts {
@@ -84,6 +95,22 @@ func NewServer(name string, opts ...ServerOption) (*Server, error) {
 	// 添加TLS支持
 	if s.tls != nil {
 		serverOpts = append(serverOpts, grpc.Creds(s.tls))
+	}
+
+	// 添加追踪拦截器
+	if s.enableTracing {
+		s.unaryInterceptors = append(s.unaryInterceptors, opentelemetry.GRPCUnaryServerInterceptor())
+		s.streamInterceptors = append(s.streamInterceptors, opentelemetry.GRPCStreamServerInterceptor())
+	}
+
+	// 添加一元拦截器链
+	if len(s.unaryInterceptors) > 0 {
+		serverOpts = append(serverOpts, grpc.ChainUnaryInterceptor(s.unaryInterceptors...))
+	}
+
+	// 添加流拦截器链
+	if len(s.streamInterceptors) > 0 {
+		serverOpts = append(serverOpts, grpc.ChainStreamInterceptor(s.streamInterceptors...))
 	}
 
 	s.Server = grpc.NewServer(serverOpts...)

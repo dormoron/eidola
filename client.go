@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
+	"github.com/dormoron/eidola/internal/circuitbreaker"
+	"github.com/dormoron/eidola/internal/connpool"
 	"github.com/dormoron/eidola/internal/errs"
 	"github.com/dormoron/eidola/registry"
 	"google.golang.org/grpc"
@@ -31,6 +34,36 @@ type Client struct {
 	maxConcurrentStreams  uint32
 	initialWindowSize     int32
 	initialConnWindowSize int32
+
+	// 连接池配置
+	poolConfig connpool.Options
+	// 是否启用连接池
+	enablePool bool
+	// 连接池映射表，按服务名管理连接池
+	pools map[string]connpool.Pool
+	// 连接池互斥锁
+	poolsMu sync.RWMutex
+
+	// 自适应连接池配置
+	adaptivePoolConfig connpool.AdaptiveOptions
+	// 是否启用自适应连接池
+	enableAdaptivePool bool
+	// 是否预热连接池
+	preconnectCount int
+
+	// 断路器配置
+	circuitBreakerConfig circuitbreaker.Options
+	// 是否启用断路器
+	enableCircuitBreaker bool
+	// 断路器映射表，按服务名管理断路器
+	circuitBreakers map[string]*circuitbreaker.CircuitBreaker
+	// 断路器互斥锁
+	circuitBreakersMu sync.RWMutex
+
+	// 压缩选项
+	enableCompression bool
+	// 压缩算法
+	compressionAlgorithm string
 }
 
 // RetryConfig defines the configuration for client-side retry.
@@ -62,6 +95,20 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 		maxConcurrentStreams:  100,
 		initialWindowSize:     1024 * 1024,      // 1MB
 		initialConnWindowSize: 1024 * 1024 * 10, // 10MB
+
+		// 连接池默认配置
+		poolConfig: connpool.Options{
+			MaxIdle:     5,
+			MaxActive:   20,
+			IdleTimeout: 60 * time.Second,
+			WaitTimeout: 3 * time.Second,
+			Wait:        true,
+		},
+		pools: make(map[string]connpool.Pool),
+
+		// 断路器默认配置
+		circuitBreakerConfig: circuitbreaker.DefaultOptions(),
+		circuitBreakers:      make(map[string]*circuitbreaker.CircuitBreaker),
 	}
 	for _, opt := range opts {
 		opt(c) // Apply each ClientOption to the client.
@@ -123,8 +170,110 @@ func ClientWithStreamConfig(maxStreams uint32, windowSize, connWindowSize int32)
 	}
 }
 
-// Dial creates a client connection to the given target.
-func (c *Client) Dial(ctx context.Context, target string, dialOptions ...grpc.DialOption) (*grpc.ClientConn, error) {
+// ClientWithConnectionPool 返回一个开启连接池的ClientOption
+func ClientWithConnectionPool(poolConfig connpool.Options) ClientOption {
+	return func(c *Client) {
+		c.enablePool = true
+		c.enableAdaptivePool = false
+		c.poolConfig = poolConfig
+	}
+}
+
+// ClientWithAdaptiveConnectionPool 返回一个开启自适应连接池的ClientOption
+func ClientWithAdaptiveConnectionPool(adaptiveConfig connpool.AdaptiveOptions) ClientOption {
+	return func(c *Client) {
+		c.enablePool = true
+		c.enableAdaptivePool = true
+		c.adaptivePoolConfig = adaptiveConfig
+	}
+}
+
+// ClientWithPreconnect 设置连接池预热连接数
+func ClientWithPreconnect(count int) ClientOption {
+	return func(c *Client) {
+		c.preconnectCount = count
+	}
+}
+
+// ClientWithCircuitBreaker 返回一个开启断路器的ClientOption
+func ClientWithCircuitBreaker(cbConfig circuitbreaker.Options) ClientOption {
+	return func(c *Client) {
+		c.enableCircuitBreaker = true
+		c.circuitBreakerConfig = cbConfig
+	}
+}
+
+// ClientWithCompression 返回一个开启压缩的ClientOption
+func ClientWithCompression(algorithm string) ClientOption {
+	return func(c *Client) {
+		c.enableCompression = true
+		c.compressionAlgorithm = algorithm
+	}
+}
+
+// createConnection 创建一个新的gRPC连接
+func (c *Client) createConnection(ctx context.Context, target string, dialOptions ...grpc.DialOption) (*grpc.ClientConn, error) {
+	// 检查连接池中是否有可用连接
+	if c.enablePool {
+		c.poolsMu.RLock()
+		pool, ok := c.pools[target]
+		c.poolsMu.RUnlock()
+
+		if ok {
+			poolConn, err := pool.Get(ctx)
+			if err == nil {
+				return poolConn.ClientConn, nil
+			}
+			// 获取连接失败，尝试创建新连接
+		} else {
+			// 没有该目标的连接池，创建一个
+			c.poolsMu.Lock()
+			defer c.poolsMu.Unlock()
+
+			// 二次检查，防止在获取锁的过程中其他goroutine已创建
+			if pool, ok = c.pools[target]; ok {
+				poolConn, err := pool.Get(ctx)
+				if err == nil {
+					return poolConn.ClientConn, nil
+				}
+			} else {
+				// 连接工厂函数
+				factory := func(ctx context.Context, target string) (*grpc.ClientConn, error) {
+					return c.createRealConnection(ctx, target, dialOptions...)
+				}
+
+				// 创建连接池
+				var newPool connpool.Pool
+				if c.enableAdaptivePool {
+					newPool = connpool.NewAdaptivePool(target, factory, c.adaptivePoolConfig)
+
+					// 预热连接池
+					if c.preconnectCount > 0 {
+						if ap, ok := newPool.(*connpool.AdaptivePool); ok {
+							ap.Preconnect(ctx, c.preconnectCount)
+						}
+					}
+				} else {
+					newPool = connpool.NewPool(target, factory, c.poolConfig)
+				}
+
+				c.pools[target] = newPool
+
+				// 尝试获取连接
+				poolConn, err := newPool.Get(ctx)
+				if err == nil {
+					return poolConn.ClientConn, nil
+				}
+			}
+		}
+	}
+
+	// 连接池未启用或获取连接失败，直接创建新连接
+	return c.createRealConnection(ctx, target, dialOptions...)
+}
+
+// createRealConnection 创建实际的gRPC连接（没有连接池时使用）
+func (c *Client) createRealConnection(ctx context.Context, target string, dialOptions ...grpc.DialOption) (*grpc.ClientConn, error) {
 	var opts []grpc.DialOption
 
 	// Configure service resolution if a registry is provided.
@@ -146,7 +295,7 @@ func (c *Client) Dial(ctx context.Context, target string, dialOptions ...grpc.Di
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	}
 
-	// 创建一个合并的服务配置
+	// 设置服务配置
 	var serviceConfig map[string]interface{}
 
 	// 设置负载均衡策略
@@ -203,6 +352,16 @@ func (c *Client) Dial(ctx context.Context, target string, dialOptions ...grpc.Di
 		grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(1024*1024*4)), // 4MB max message size
 	)
 
+	// 设置压缩算法
+	if c.enableCompression {
+		if c.compressionAlgorithm != "" {
+			opts = append(opts, grpc.WithDefaultCallOptions(grpc.UseCompressor(c.compressionAlgorithm)))
+		} else {
+			// 默认使用gzip
+			opts = append(opts, grpc.WithDefaultCallOptions(grpc.UseCompressor("gzip")))
+		}
+	}
+
 	// Add context timeout
 	opts = append(opts, grpc.WithBlock())
 
@@ -223,4 +382,119 @@ func (c *Client) Dial(ctx context.Context, target string, dialOptions ...grpc.Di
 		return nil, errs.ErrClientDial(target, err)
 	}
 	return clientConn, nil
+}
+
+// Dial creates a client connection to the given target.
+func (c *Client) Dial(ctx context.Context, target string, dialOptions ...grpc.DialOption) (*grpc.ClientConn, error) {
+	// 如果启用了断路器，先检查断路器状态
+	if c.enableCircuitBreaker {
+		if err := c.getCircuitBreaker(target).Allow(); err != nil {
+			return nil, fmt.Errorf("circuit breaker rejected request: %w", err)
+		}
+
+		// 设置请求完成后更新断路器状态
+		defer func() {
+			// 这里不能处理函数返回的错误，因为在defer中无法获取返回值
+			// 实际使用时可以通过装饰器或拦截器模式来优雅处理
+		}()
+	}
+
+	// 如果启用了连接池，从连接池获取连接
+	conn, err := c.createConnection(ctx, target, dialOptions...)
+	if err != nil {
+		// 如果是连接错误，标记断路器失败
+		if c.enableCircuitBreaker {
+			c.getCircuitBreaker(target).Failure()
+		}
+		return nil, err
+	}
+
+	// 标记断路器成功
+	if c.enableCircuitBreaker {
+		c.getCircuitBreaker(target).Success()
+	}
+
+	return conn, nil
+}
+
+// getPool 获取指定服务的连接池，如果不存在则创建
+func (c *Client) getPool(target string, dialOptions ...grpc.DialOption) connpool.Pool {
+	c.poolsMu.RLock()
+	pool, exists := c.pools[target]
+	c.poolsMu.RUnlock()
+
+	if exists {
+		return pool
+	}
+
+	// 如果连接池不存在，创建新的连接池
+	c.poolsMu.Lock()
+	defer c.poolsMu.Unlock()
+
+	// 双重检查，防止竞争条件
+	if pool, exists = c.pools[target]; exists {
+		return pool
+	}
+
+	// 创建一个用于连接池的工厂函数
+	factory := func(ctx context.Context, target string) (*grpc.ClientConn, error) {
+		return c.createConnection(ctx, target, dialOptions...)
+	}
+
+	pool = connpool.NewPool(target, factory, c.poolConfig)
+	c.pools[target] = pool
+
+	return pool
+}
+
+// getCircuitBreaker 获取指定服务的断路器，如果不存在则创建
+func (c *Client) getCircuitBreaker(target string) *circuitbreaker.CircuitBreaker {
+	c.circuitBreakersMu.RLock()
+	cb, exists := c.circuitBreakers[target]
+	c.circuitBreakersMu.RUnlock()
+
+	if exists {
+		return cb
+	}
+
+	// 如果断路器不存在，创建新的断路器
+	c.circuitBreakersMu.Lock()
+	defer c.circuitBreakersMu.Unlock()
+
+	// 双重检查，防止竞争条件
+	if cb, exists = c.circuitBreakers[target]; exists {
+		return cb
+	}
+
+	cb = circuitbreaker.New(target, c.circuitBreakerConfig)
+	c.circuitBreakers[target] = cb
+
+	return cb
+}
+
+// Close 关闭客户端资源
+func (c *Client) Close() error {
+	var errs []error
+
+	// 关闭所有连接池
+	c.poolsMu.Lock()
+	for _, pool := range c.pools {
+		if err := pool.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	c.pools = make(map[string]connpool.Pool)
+	c.poolsMu.Unlock()
+
+	// 清理断路器资源
+	c.circuitBreakersMu.Lock()
+	c.circuitBreakers = make(map[string]*circuitbreaker.CircuitBreaker)
+	c.circuitBreakersMu.Unlock()
+
+	// 如果有错误，返回第一个错误
+	if len(errs) > 0 {
+		return errs[0]
+	}
+
+	return nil
 }
